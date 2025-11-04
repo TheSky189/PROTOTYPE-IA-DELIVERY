@@ -1,0 +1,6 @@
+id_destino,nombre,lat,lon,dist_km_desde_mataro
+D001,Barcelona,41.3888,2.1590,33
+D002,Girona,41.9794,2.8214,108
+D003,Tarragona,41.1189,1.2445,98
+D004,Lleida,41.6176,0.6200,157
+D005,Zaragoza,41.6488,-0.8891,300
