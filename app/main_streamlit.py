@@ -1,16 +1,25 @@
-# -*- coding: utf-8 -*-
-# Interfaz web con Streamlit
-
-import streamlit as st
-import pandas as pd
 import os, sys
+
+# --- AÑADIR LA RAÍZ DEL PROYECTO AL PYTHONPATH (ANTES DE IMPORTAR core) ---
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+# --- IMPORTS DEL PROYECTO UNA VEZ QUE LA RUTA YA ESTÁ CORRECTA ---
+from core.graph import generar_mapa_rutas
 from core.preprocess import preparar_datos
 from core.vrp_heuristic import planificar_rutas
 from core.scoring import evaluar_solutions
+
+# --- LIBRERÍAS EXTERNAS ---
+import streamlit as st
+import pandas as pd
+from streamlit_folium import st_folium
+import networkx as nx
+import folium
+import pyodbc
+from io import BytesIO
+from zipfile import ZipFile
 
 st.set_page_config(page_title="IA Delivery – Prototipo", layout="wide")
 st.title("IA Delivery – Simulador de Rutas para Perecederos")
@@ -81,3 +90,15 @@ if all([pedidos is not None, productos is not None, destinos is not None]):
             st.json(best)
 else:
     st.info("Sube los tres CSV o pulsa 'Usar datos de ejemplo'.")
+
+# --- Bloque que ya tienes ---
+if st.button("Calcular rutas (Demo)", key="btn_calcular_rutas"):
+    rutas = planificar_rutas()
+    st.session_state.rutas = rutas
+    st.session_state.mostrar_mapa = True 
+
+if st.session_state.get("mostrar_mapa", False) and "rutas" in st.session_state:
+    rutas = st.session_state.rutas
+    mapa = generar_mapa_rutas(rutas)
+    st.subheader("🗺️ Mapa de rutas generadas")
+    st_folium(mapa, width=None, height=900)
