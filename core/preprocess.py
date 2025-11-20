@@ -1,34 +1,49 @@
+# core/preprocess.py
 # -*- coding: utf-8 -*-
-# Preparación de datos: cálculo de fecha de caducidad del pedido y validaciones
+# Preparación de datos de pedidos y cálculo de ready/deadline
+
 import pandas as pd
-from datetime import timedelta
 
 def preparar_datos(pedidos: pd.DataFrame, productos: pd.DataFrame, destinos: pd.DataFrame):
-    """Devuelve dataframes limpios y un campo 'fecha_caducidad_pedido' por id_pedido
-    tomando el mínimo (fecha_pedido + t_fabricacion + caducidad) entre sus líneas.
     """
-    # Normalizar columnas esperadas
+    Devuelve:
+      - agg (por id_pedido) con:
+          fecha_pedido (datetime)
+          id_cliente
+          id_destino
+          qty_total
+          ready_ts  = max(fecha_pedido + t_fabricacion) entre líneas del pedido
+          fecha_caducidad_pedido = min(fecha_pedido + t_fabricacion + caducidad) entre líneas del pedido
+      - productos (copia)
+      - destinos  (copia)
+    """
     pedidos = pedidos.copy()
-    pedidos["fecha_pedido"] = pd.to_datetime(pedidos["fecha_pedido"]).dt.date
+    productos = productos.copy()
+    destinos = destinos.copy()
 
-    prod = productos.set_index("id_producto")[
-        ["tiempo_fabricacion_dias", "caducidad_dias"]
-    ]
+    pedidos["fecha_pedido"] = pd.to_datetime(pedidos["fecha_pedido"])
 
-    # Unir tiempos de fabricación y caducidad por línea
-    pedidos = pedidos.join(
-        prod, on="id_producto", how="left"
+    prod = productos.set_index("id_producto")[["tiempo_fabricacion_dias", "caducidad_dias"]]
+    pedidos = pedidos.join(prod, on="id_producto", how="left")
+
+    # Ready por línea
+    pedidos["line_ready"] = pedidos["fecha_pedido"] + pd.to_timedelta(pedidos["tiempo_fabricacion_dias"], unit="D")
+
+    # Deadline por línea
+    pedidos["line_deadline"] = (
+        pedidos["fecha_pedido"]
+        + pd.to_timedelta(pedidos["tiempo_fabricacion_dias"], unit="D")
+        + pd.to_timedelta(pedidos["caducidad_dias"], unit="D")
     )
 
-    # Calcular fecha de caducidad por línea
-    pedidos["caducidad_linea"] = pd.to_datetime(pedidos["fecha_pedido"]) \
-        + pd.to_timedelta(pedidos["tiempo_fabricacion_dias"], unit="D") \
-        + pd.to_timedelta(pedidos["caducidad_dias"], unit="D")
+    # Agregación por pedido
+    agg = pedidos.groupby("id_pedido").agg(
+        fecha_pedido=("fecha_pedido", "min"),
+        id_cliente=("id_cliente", "first"),
+        id_destino=("id_destino", "first"),
+        qty_total=("cantidad", "sum"),
+        ready_ts=("line_ready", "max"),
+        fecha_caducidad_pedido=("line_deadline", "min"),
+    ).reset_index()
 
-    # Reducir a nivel pedido: mínimo entre sus líneas
-    min_cad = pedidos.groupby("id_pedido")["caducidad_linea"].min().rename("fecha_caducidad_pedido")
-    pedidos = pedidos.merge(min_cad, on="id_pedido", how="left")
-
-    # Destinos: asegurar dist o lat/lon
-    destinos = destinos.copy()
-    return pedidos, productos, destinos
+    return agg, productos, destinos

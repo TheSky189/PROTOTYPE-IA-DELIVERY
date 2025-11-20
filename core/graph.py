@@ -1,20 +1,44 @@
+# core/graph.py
 # -*- coding: utf-8 -*-
-# Construcción de grafo y distancias
+# Construcción de grafo completo con distancias geodésicas
+
 import networkx as nx
+from geopy.distance import geodesic
+
+ORIGEN_ID = "Mataro"
+ORIGEN_LATLON = (41.5381, 2.4445)  # coordenadas aproximadas de Mataró
+
+def _latlon(row):
+    try:
+        return (float(row["lat"]), float(row["lon"]))
+    except Exception:
+        return None
 
 def construir_grafo(destinos_df):
-    """Crea un grafo simple usando dist_km_desde_mataro como proxy de distancias.
-    Para demo: conectamos Mataró con cada destino y entre destinos con suma aproximada.
+    """
+    Crea un grafo no dirigido con:
+      - Nodo origen (Mataró)
+      - Todos los destinos con lat/lon válidos
+      - Aristas completas entre todos los destinos y el origen
+    Peso = distancia geodésica (km)
     """
     G = nx.Graph()
-    # Nodo origen fijo
-    origen = "Mataro"
-    G.add_node(origen)
+    G.add_node(ORIGEN_ID, lat=ORIGEN_LATLON[0], lon=ORIGEN_LATLON[1])
 
-    # Añadir destinos
-    for _, row in destinos_df.iterrows():
-        d = row["id_destino"]
-        G.add_node(d)
-        if row.get("dist_km_desde_mataro") is not None:
-            G.add_edge(origen, d, weight=float(row["dist_km_desde_mataro"]))
+    destinos = []
+    for _, r in destinos_df.iterrows():
+        did = r["id_destino"]
+        ll = _latlon(r)
+        if not ll:
+            continue
+        G.add_node(did, lat=ll[0], lon=ll[1])
+        G.add_edge(ORIGEN_ID, did, weight=geodesic(ORIGEN_LATLON, ll).km)
+        destinos.append((did, ll))
+
+    # Conectar destinos entre sí (grafo completo)
+    for i in range(len(destinos)):
+        for j in range(i + 1, len(destinos)):
+            di, lli = destinos[i]
+            dj, llj = destinos[j]
+            G.add_edge(di, dj, weight=geodesic(lli, llj).km)
     return G
