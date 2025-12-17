@@ -1,0 +1,37 @@
+DestinoID,nombre_completo,distancia_km,coordenadas_gps,provinciaID,ciudad
+1,Destino Castellón,242.85,"40.2518568, -0.0615052",12,Castellón
+2,Destino Segovia,529.57,"40.944489, -4.115206",40,Segovia
+3,Destino Valladolid,575.06,"41.6521807, -4.728605",47,Valladolid
+4,Destino Toledo,550.05,"39.8558913, -4.024265",45,Toledo
+5,Destino Girona,85.5,"41.9793006, 2.8199439",17,Girona
+6,Destino Soria,388.44,"41.6012505, -2.721938",42,Soria
+7,Destino Córdoba,711.53,"37.8845813, -4.7760138",14,Córdoba
+8,Destino Lleida,132.08,"41.6147605, 0.6267842",25,Lleida
+9,Destino Burgos,498.36,"42.343926, -3.696977",9,Burgos
+10,Destino Álava,431.83,"42.8440723, -2.6820829",1,Álava
+11,Destino Guadalajara,455.56,"40.7399963, -2.50593",19,Guadalajara
+12,Destino Tarragona,82.21,"41.1172364, 1.2546057",43,Tarragona
+13,Destino Zamora,661.01,"41.6857693, -5.942315",49,Zamora
+14,Destino Guipúzcoa,403.61,"43.1445278, -2.2037955",20,Guipúzcoa
+15,Destino Badajoz,372.78,"38.878187, -6.9701115",6,Badajoz
+16,Destino Navarra,825.56,"42.6125488, -1.8307877",31,Navarra
+17,Destino Teruel,299.5,"40.6005259, -0.9229282",44,Teruel
+19,Destino Murcia,472.04,"37.9923795, -1.1305431",30,Murcia
+21,Destino A Coruña,895.0,"43.3709703, -8.3959425",15,A Coruña
+22,Destino Ávila,582.19,"40.656478, -4.7002172",5,Ávila
+23,Destino Valencia,302.81,"39.4697065, -0.3763353",46,Valencia
+24,Destino Ciudad Real,583.14,"38.9597348, -3.8828744",13,Ciudad Real
+25,Destino Barcelona,0.0,"41.3825802, 2.177073",8,Barcelona
+27,Destino Cuenca,390.98,"40.0661031, -2.1313528",16,Cuenca
+28,Destino Madrid,504.57,"40.416782, -3.703507",28,Madrid
+29,Destino Lugo,821.5,"43.0396042, -7.4566072",27,Lugo
+30,Destino La Rioja,159.69,"42.3285528, -2.4674917",26,La Rioja
+32,Destino Palencia,561.34,"42.4096322, -4.6161004",34,Palencia
+33,Destino Vizcaya,888.86,"43.238482, -2.8516316",48,Vizcaya
+34,Destino Huesca,230.28,"42.1360615, -0.0298027",22,Huesca
+35,Destino Albacete,433.31,"38.9950921, -1.8559154",2,Albacete
+36,Destino Almería,644.56,"36.8414197, -2.4628135",4,Almería
+37,Destino Salamanca,657.73,"40.9651572, -5.6640182",37,Salamanca
+38,Destino Zaragoza,256.17,"41.6521342, -0.8809428",50,Zaragoza
+39,Destino Sevilla,830.4,"37.3886303, -5.9953403",41,Sevilla
+40,Destino Ourense,837.68,"42.1939629, -7.537124",32,Ourense
