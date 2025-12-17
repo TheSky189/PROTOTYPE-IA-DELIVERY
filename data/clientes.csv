@@ -1,3 +1,4 @@
+"ClienteID","Nombre","email","fecha_registro"
 "1","Cliente1","cliente1@correo.com","2020-01-02"
 "2","Cliente2","cliente2@correo.com","2020-01-03"
 "3","Cliente3","cliente3@correo.com","2020-01-04"

@@ -1,3 +1,4 @@
+"ProductoID","Nombre","PrecioVenta","TiempoFabricacionMedia","Caducidad"
 "1","Producto1","45.84","3","9"
 "2","Producto2","54.20","9","27"
 "3","Producto3","74.19","7","21"

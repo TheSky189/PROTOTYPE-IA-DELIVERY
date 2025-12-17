@@ -1,3 +1,15 @@
+# Limpieza de caché (TTL 24 horas)
+import time
+from pathlib import Path
+
+CACHE_DIR = Path("cache")
+TTL_SECONDS = 24 * 3600  # 24 horas
+now = time.time()
+
+if CACHE_DIR.exists():
+    for f in CACHE_DIR.glob("*.json"):
+        if now - f.stat().st_mtime > TTL_SECONDS:
+            f.unlink()
 # -*- coding: utf-8 -*-
 # Interfaz web con Streamlit (prototipo completo con estado persistente + mapa)
 
