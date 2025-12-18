@@ -4,6 +4,7 @@ import folium
 import openrouteservice
 from openrouteservice import convert
 from folium.plugins import MarkerCluster
+from collections import OrderedDict
 
 st.set_page_config(page_title="Mapa Destinos (Ruta por todos los puntos)", layout="wide")
 st.title("Mapa de Destinos + Ruta desde Barcelona (pasando por todas las paradas del CSV)")
@@ -22,9 +23,9 @@ st.subheader("Destinos disponibles (CSV)")
 st.dataframe(df)
 
 # -------------------------
-# Origen fijo
+# Origen fijo (actualizado)
 # -------------------------
-origen = (41.3870, 2.1690)  # (lat, lon) Plaça Catalunya
+origen = (41.544608, 2.441753)  # (lat, lon) nuevo punto origen solicitado
 origen_lonlat = [origen[1], origen[0]]  # [lon, lat] para ORS
 
 # -------------------------
@@ -45,21 +46,33 @@ def parse_latlon(text):
 
 # Construcción inicial de paradas desde CSV (sin validar enrutable aún)
 all_coords = [[origen[1], origen[0]]]  # lista de [lon, lat] empezando por origen
-all_stops = [{"index": None, "name": "Origen - Plaça Catalunya", "lat": origen[0], "lon": origen[1]}]
+all_stops = [{"index": None, "name": "Origen - Plaça Catalunya", "lat": origen[0], "lon": origen[1], "city": None}]
 
 for idx, row in df.iterrows():
     parsed = parse_latlon(row.get("coordenadas_gps", ""))
+    # Intentamos leer el campo 'Ciudad' con varias capitalizaciones comunes
+    city_value = row.get("Ciudad", row.get("ciudad", row.get("CIUDAD", None)))
+    display_name = row.get("nombre_completo", f"Destino {idx}")
     if parsed:
         lat, lon = parsed
         all_coords.append([lon, lat])
         all_stops.append({
             "index": idx,
-            "name": row.get("nombre_completo", f"Destino {idx}"),
+            "name": display_name,
             "lat": lat,
-            "lon": lon
+            "lon": lon,
+            "city": city_value
         })
     else:
-        st.warning(f"Fila {idx} - coordenadas no parseables: {row.get('coordenadas_gps')}")
+        st.warning(f"Fila {idx} - coordenadas no parseables: {row.get('coordenadas_gps')} - Ciudad: {city_value}")
+        # También añadimos como stop 'sin coord' para poder informar después si hace falta
+        all_stops.append({
+            "index": idx,
+            "name": display_name,
+            "lat": None,
+            "lon": None,
+            "city": city_value
+        })
 
 if len(all_coords) < 2:
     st.error("No hay destinos válidos en el CSV para construir una ruta.")
@@ -84,6 +97,20 @@ discarded_stops = []             # stops descartados con error
 # Intentar conectar secuencialmente desde el último válido hasta el candidato
 for i in range(1, len(all_coords)):
     candidate = all_coords[i]
+    # Si las coordenadas eran None (parseo fallido) ya las ignoramos aquí
+    if candidate is None or candidate[0] is None:
+        # Registrar como descartado por falta de coordenadas
+        discarded_stops.append({
+            "index": all_stops[i].get("index"),
+            "name": all_stops[i].get("name"),
+            "city": all_stops[i].get("city"),
+            "lat": all_stops[i].get("lat"),
+            "lon": all_stops[i].get("lon"),
+            "error": "Coordenadas no parseables"
+        })
+        st.warning(f"Descartado (coordenadas no parseables): {all_stops[i]['name']} — Ciudad: {all_stops[i].get('city')}")
+        continue
+
     try:
         # Petición corta solo para validar enrutable entre last_valid y candidate
         _ = client.directions(
@@ -100,11 +127,12 @@ for i in range(1, len(all_coords)):
         discarded_stops.append({
             "index": all_stops[i].get("index"),
             "name": all_stops[i].get("name"),
+            "city": all_stops[i].get("city"),
             "lat": all_stops[i].get("lat"),
             "lon": all_stops[i].get("lon"),
             "error": str(e)
         })
-        st.warning(f"Descartado (no enrutable): {all_stops[i]['name']} — {all_stops[i]['lat']}, {all_stops[i]['lon']}")
+        st.warning(f"Descartado (no enrutable): {all_stops[i]['name']} — Ciudad: {all_stops[i].get('city')} — {all_stops[i]['lat']}, {all_stops[i]['lon']}")
 
 # Si solo queda el origen, no hay ruta posible
 if len(valid_coords) < 2:
@@ -112,6 +140,11 @@ if len(valid_coords) < 2:
     if discarded_stops:
         st.markdown("### Destinos descartados")
         st.dataframe(pd.DataFrame(discarded_stops))
+        # Lista clara con nombres de la columna Ciudad (o nombre si Ciudad no existe)
+        st.markdown("#### Ciudades de los destinos descartados")
+        for d in discarded_stops:
+            display_city = d.get("city") or d.get("name") or "Sin nombre"
+            st.markdown(f"- **{display_city}** (Destino: {d.get('name')}, motivo: {d.get('error')})")
     st.stop()
 
 # -------------------------
@@ -132,19 +165,48 @@ folium.Marker(
 
 # Marcadores para paradas válidas (numeradas)
 for i, s in enumerate(valid_stops[1:], start=1):
+    # Si existe ciudad, mostrar solo la ciudad en el popup/tooltip;
+    # si no, mostrar índice + nombre
+    if s.get("city"):
+        popup_text = f"{s['city']}"
+        tooltip_text = f"{s['city']}"
+    else:
+        popup_text = f"{i}. {s['name']}"
+        tooltip_text = popup_text
+
     folium.Marker(
         location=[s["lat"], s["lon"]],
-        popup=f"{i}. {s['name']}",
-        tooltip=f"{i}. {s['name']}",
-        icon=folium.DivIcon(html=f"""<div style="font-size:12px;color:white;background:#d9534f;border-radius:12px;padding:4px 6px;">{i}</div>""")
+        popup=popup_text,
+        tooltip=tooltip_text,
+        icon=folium.DivIcon(
+            html=f"""
+            <div style="
+                display:flex;
+                align-items:center;
+                justify-content:center;
+                width:24px;
+                height:24px;
+                background:#d9534f;
+                color:white;
+                border-radius:50%;
+                font-size:12px;
+                font-weight:bold;
+                border:2px solid white;
+                box-sizing:border-box;
+            ">{i}</div>
+            """
+        )
     ).add_to(marker_cluster)
 
 # Marcadores para descartados (gris)
 for d in discarded_stops:
+    popup_text = f"Descartado: {d.get('name')}"
+    if d.get("city"):
+        popup_text += f" — Ciudad: {d.get('city')}"
     folium.Marker(
-        location=[d["lat"], d["lon"]],
-        popup=f"Descartado: {d['name']}",
-        tooltip=f"Descartado: {d['name']}",
+        location=[d["lat"], d["lon"]] if d.get("lat") is not None else [center_lat, -3.5],
+        popup=popup_text,
+        tooltip=popup_text,
         icon=folium.Icon(color="gray", icon="remove")
     ).add_to(m)
 
@@ -219,13 +281,22 @@ if duracion_total_s is not None:
 df_legs = pd.DataFrame(legs)
 st.dataframe(df_legs)
 
-# Mostrar tabla de descartados (si los hay)
-if discarded_stops:
-    st.markdown("### Destinos descartados por no ser enrutable (no aparecerán en la ruta)")
-    st.dataframe(pd.DataFrame(discarded_stops))
-
 # -------------------------
 # Mostrar mapa
 # -------------------------
-st.markdown("### Mapa con la ruta completa (se muestran solo los destinos válidos y los descartados)")
+st.markdown("### Mapa con la ruta completa (se muestran solo los destinos válidos)")
 st.components.v1.html(m._repr_html_(), width=1100, height=700)
+
+# -------------------------
+# Mostrar NOMBRES (campo ciudad) de las ciudades descartadas — justo debajo del mapa
+# -------------------------
+cities = [d.get("city") or d.get("name") or "Sin nombre" for d in discarded_stops]
+unique_cities = list(OrderedDict.fromkeys(cities))
+
+if discarded_stops and unique_cities:
+    st.markdown("### Ciudades de los destinos descartados")
+    st.write(f"Se han descartado **{len(discarded_stops)}** destinos — **{len(unique_cities)}** ciudades únicas:")
+    for c in unique_cities:
+        st.markdown(f"- **{c}**")
+else:
+    st.info("No hay destinos descartados. Todos los puntos son enrutable.")
