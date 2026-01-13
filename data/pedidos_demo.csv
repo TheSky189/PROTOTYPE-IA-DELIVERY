@@ -1,4 +1,0 @@
-id_pedido,fecha_pedido,id_cliente,id_destino,id_producto,cantidad
-P001,2025-11-04,C001,D001,PR01,120
-P001,2025-11-04,C001,D001,PR02,40
-P002,2025-11-04,C002,D005,PR01,60

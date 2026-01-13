@@ -1,0 +1,8 @@
+streamlit
+pandas
+numpy
+networkx
+geopy
+folium
+openrouteservice
+scikit-learn
