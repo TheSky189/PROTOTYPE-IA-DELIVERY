@@ -173,20 +173,63 @@ validar(productos_df, REQUIRED_PRODUCTOS, "Productos")
 
 st.success("CSV cargados y validados.")
 
-# -------------------------
 # PARÁMETROS
-# -------------------------
-st.header("2) Parámetros")
-# ahora 4 columnas: capacidad + velocidad, clusters, rf_estimators
-p1, p2, p3, p4 = st.columns(4)
+# Sidebar: variables del sistema (capacidad, velocidad, consumo, precio)
+st.sidebar.subheader("Configuración de las variables")
+
+capacidad_camion = st.sidebar.number_input(
+    "Capacidad del camión (unidades)",
+    min_value=1,
+    max_value=5000,
+    value=500,
+    step=1
+)
+
+velocidad_media = st.sidebar.number_input(
+    "Velocidad media (km/h)",
+    min_value=5.0,
+    max_value=200.0,
+    value=80.0,
+    step=1.0
+)
+
+FACTOR_CONSUMO = 25.0 / 80.0
+consumo_l_100km = velocidad_media * FACTOR_CONSUMO
+
+
+precio_litro = st.sidebar.number_input(
+    "Precio combustible (€/L)",
+    min_value=0.1,
+    max_value=5.0,
+    value=1.65,
+    step=0.01
+)
+
+st.sidebar.number_input(
+    "Consumo estimado (L / 100 km)",
+    value=round(consumo_l_100km, 2),
+    disabled=True
+)
+
+# Main: parámetros del cálculo (clusters, RF)
+st.header("2) Parámetros para el cálculo")
+p1, p2 = st.columns(2)
 with p1:
-    capacidad_camion = st.number_input("Capacidad del camión (unidades)", min_value=1, max_value=5000, value=500, step=1)
+    n_clusters = st.slider(
+        "Número de clusters geográficos (zonas)",
+        min_value=1,
+        max_value=20,
+        value=6,
+        step=1
+    )
 with p2:
-    velocidad_media = st.number_input("Velocidad media (km/h)", min_value=5.0, max_value=200.0, value=80.0, step=1.0)
-with p3:
-    n_clusters = st.slider("Número de clusters geográficos (zonas)", min_value=1, max_value=20, value=6, step=1)
-with p4:
-    rf_estimators = st.number_input("RF estimators", min_value=10, max_value=1000, value=200, step=10)
+    rf_estimators = st.number_input(
+        "RF estimators",
+        min_value=10,
+        max_value=1000,
+        value=200,
+        step=10
+    )
 
 # -------------------------
 # PREPROCESADO: crear pedidos_final
@@ -730,7 +773,73 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
 
     st.session_state["model_camiones"] = model_camiones
     st.session_state["model_trucks_raw"] = model_trucks  # guardamos estructura raw por si interesa
+
+    # -------------------------
+    # NUEVO: calcular y guardar UNA SOLA VEZ las distancias y costes por camión
+    # usando la misma lógica que el mapa (ORS si disponible, fallback haversine)
+    # y guardarlas dentro de cada entry en model_trucks -> evitar recálculos y garantizar consistencia
+    # -------------------------
+    for t in model_trucks:
+        # construir stops para este camión
+        stops = []
+        for o in t.get("orders", []):
+            lat = o.get("lat"); lon = o.get("lon")
+            if pd.notna(lat) and pd.notna(lon):
+                stops.append({"PedidoID": o.get("PedidoID"), "lat": float(lat), "lon": float(lon)})
+        if not stops:
+            t["total_km"] = 0.0
+            t["km_to_last"] = 0.0
+            t["cost_eur"] = 0.0
+            t["n_pedidos"] = 0
+            continue
+
+        # ordenar stops (NN + 2-opt) — misma heurística que en el visualizador
+        ordered = two_opt_route_order(ORIGEN, stops, max_iter=100)
+
+        coords = [ORIGEN_LONLAT]
+        for s in ordered:
+            coords.append([s["lon"], s["lat"]])
+        coords.append(ORIGEN_LONLAT)
+
+        total_km = 0.0
+        km_to_last = 0.0
+        total_legs = len(coords) - 1
+        for i in range(total_legs):
+            a, b = coords[i], coords[i+1]
+            try:
+                if client is None:
+                    raise RuntimeError("ORS client no disponible")
+                resp = client.directions(coordinates=[a,b], profile="driving-car", format="json", radiuses=[1000,1000])
+                route = resp["routes"][0]
+                leg_km = route["summary"]["distance"]/1000.0
+                total_km += leg_km
+                if i != total_legs - 1:
+                    km_to_last += leg_km
+            except Exception:
+                # fallback: straight line haversine
+                latlon_a = [a[1], a[0]]
+                latlon_b = [b[1], b[0]]
+                leg_km = haversine(latlon_a[0], latlon_a[1], latlon_b[0], latlon_b[1])
+                total_km += leg_km
+                if i != total_legs - 1:
+                    km_to_last += leg_km
+
+        cost_eur = (total_km / 100.0) * consumo_l_100km * precio_litro
+        t["total_km"] = total_km
+        t["km_to_last"] = km_to_last
+        t["cost_eur"] = cost_eur
+        t["n_pedidos"] = len(stops)
+
+    # guardar de nuevo en session_state
+    st.session_state["model_trucks_raw"] = model_trucks
+
+    # calcular resumen global (usar los valores guardados, no recalcular)
+    sum_total_km = sum(t.get("total_km", 0.0) for t in model_trucks)
+    total_cost_all = sum(t.get("cost_eur", 0.0) for t in model_trucks)
+
     st.success(f"Asignación completada — camiones usados: {len(model_camiones)}")
+    st.success(f"Km total (todos los camiones, origen→origen) [suma de rutas por camión]: {sum_total_km:.2f} km")
+    st.success(f"Coste total combustible (todos los camiones): {total_cost_all:.2f} €")
 
 # -------------------------
 # VISUALIZACIÓN: resultados (expanders)
@@ -801,8 +910,9 @@ def mostrar_mapa_camion_from_df(df_camion, camion_id):
     for i, s in enumerate(final_stops[1:-1], start=1):
         folium.Marker([s["lat"], s["lon"]], popup=f"Pedido {s['PedidoID']} - {s['city']}", tooltip=s['city']).add_to(cluster)
 
-    total_km = 0.0
-    km_to_last = 0.0
+    # Dibujar trazado (usamos ORS si está disponible, igual que antes)
+    total_km_local = 0.0
+    km_to_last_local = 0.0
     total_legs = len(coords) - 1
     for i in range(total_legs):
         a, b = coords[i], coords[i+1]
@@ -812,10 +922,9 @@ def mostrar_mapa_camion_from_df(df_camion, camion_id):
             resp = client.directions(coordinates=[a,b], profile="driving-car", format="json", radiuses=[1000,1000])
             route = resp["routes"][0]
             leg_km = route["summary"]["distance"]/1000
-            total_km += leg_km
-            # solo sumamos a km_to_last si NO es la última pierna (retorno al origen)
+            total_km_local += leg_km
             if i != total_legs - 1:
-                km_to_last += leg_km
+                km_to_last_local += leg_km
             decoded = convert.decode_polyline(route["geometry"])["coordinates"]
             poly = [(lat, lon) for lon, lat in decoded]
             if i == total_legs - 1:
@@ -824,14 +933,13 @@ def mostrar_mapa_camion_from_df(df_camion, camion_id):
                 color = hsv_to_hex(i/max(1,total_legs-2))
                 folium.PolyLine(poly, color=color, weight=5, tooltip=f"{final_stops[i]['city']} → {final_stops[i+1]['city']}").add_to(m)
         except Exception:
-            # fallback: straight line and approximate km via haversine
             latlon_a = [a[1], a[0]]
             latlon_b = [b[1], b[0]]
             folium.PolyLine([latlon_a, latlon_b], color="gray", weight=3, dash_array="4,6").add_to(m)
             leg_km = haversine(latlon_a[0], latlon_a[1], latlon_b[0], latlon_b[1])
-            total_km += leg_km
+            total_km_local += leg_km
             if i != total_legs - 1:
-                km_to_last += leg_km
+                km_to_last_local += leg_km
 
     legend_html = """
     <div style="
@@ -846,9 +954,25 @@ def mostrar_mapa_camion_from_df(df_camion, camion_id):
     m.get_root().html.add_child(folium.Element(legend_html))
     st.components.v1.html(m._repr_html_(), height=700)
 
+    # Mostrar métricas: usamos los valores guardados en model_trucks_raw (si existen) para garantizar consistencia con el resumen
+    stored = None
+    if "model_trucks_raw" in st.session_state:
+        stored = next((x for x in st.session_state["model_trucks_raw"] if x.get("id") == camion_id), None)
+
+    if stored is not None and "total_km" in stored:
+        total_km_show = stored["total_km"]
+        km_to_last_show = stored.get("km_to_last", km_to_last_local)
+    else:
+        # fallback: usar valores locales calculados en la función
+        total_km_show = total_km_local
+        km_to_last_show = km_to_last_local
+
+    coste_combustible_total = (total_km_show / 100.0) * consumo_l_100km * precio_litro
+
     # mostrar ambas métricas: total (incluye retorno) y distancia hasta último pedido (sin retorno)
-    st.success(f"Distancia total aproximada (euclídea): {total_km:.2f} km")
-    st.info(f"Distancia hasta el último pedido (sin retorno al origen): {km_to_last:.2f} km")
+    st.success(f"Distancia total aproximada (euclídea): {total_km_show:.2f} km")
+    st.success(f"Coste total de combustible del trayecto completo (incluye retorno al origen): {coste_combustible_total:.2f} €")
+    st.info(f"Distancia hasta el último pedido (sin retorno al origen): {km_to_last_show:.2f} km")
 
     # --- nueva funcionalidad: estimación de días hasta la última entrega basada en velocidad_media y 9h/día ---
     try:
@@ -856,19 +980,18 @@ def mostrar_mapa_camion_from_df(df_camion, camion_id):
         if vm <= 0:
             st.warning("Velocidad media debe ser mayor que 0 para calcular tiempos.")
         else:
-            hours_to_last = km_to_last / vm  # horas de conducción total hasta último pedido
+            hours_to_last = km_to_last_show / vm  # horas de conducción total hasta último pedido
             driving_hours_per_day = 9.0
             days_to_last = hours_to_last / driving_hours_per_day
             # mostrar detalles: horas y días (con 2 decimales)
             st.info(f"Tiempo de conducción estimado hasta el último pedido: {hours_to_last:.2f} h")
             st.info(f"Días de conducción estimados hasta el último pedido (conductor: {driving_hours_per_day:.0f} h/día): {days_to_last:.2f} días")
-            
-            hours_total = total_km / vm
+
+            hours_total = total_km_show / vm
             days_total = hours_total / driving_hours_per_day
 
-        st.info(f"Tiempo de conducción estimado hasta volver al origen (Mataró): {hours_total:.2f} h")
-        st.info(f"Días de conducción estimados hasta volver al origen (conductor: {driving_hours_per_day:.0f} h/día): {days_total:.2f} días")
-
+            st.info(f"Tiempo de conducción estimado hasta volver al origen (Mataró): {hours_total:.2f} h")
+            st.info(f"Días de conducción estimados hasta volver al origen (conductor: {driving_hours_per_day:.0f} h/día): {days_total:.2f} días")
     except Exception:
         st.warning("No se pudo calcular tiempo estimado hasta el último pedido (error en velocidad media).")
 
@@ -882,3 +1005,34 @@ if "model_camiones" in st.session_state:
             mostrar_mapa_camion_from_df(df_camion, camion_id)
 else:
     st.info("No hay camiones asignados para visualizar. Ejecuta la asignación primero.")
+
+# -------------------------
+# Resumen global persistente (si existe asignación)
+# Ahora mostramos las distancias ya calculadas y guardadas en model_trucks_raw (no recalculamos)
+# -------------------------
+if "model_trucks_raw" in st.session_state:
+    trucks_all = st.session_state["model_trucks_raw"]
+
+    per_truck = []
+    sum_total_km = 0.0
+    sum_cost = 0.0
+    for t in trucks_all:
+        km_t = t.get("total_km", 0.0)
+        cost_t = t.get("cost_eur", 0.0)
+        n_ped = t.get("n_pedidos", 0)
+        per_truck.append({"truck_id": t.get("id"), "km": km_t, "cost_eur": cost_t, "n_pedidos": n_ped})
+        sum_total_km += km_t
+        sum_cost += cost_t
+
+    st.markdown("---")
+    st.subheader("Resumen global: coste combustible (todos los camiones) — basado en valores mostrados arriba")
+    df_cost = pd.DataFrame(per_truck)
+    if not df_cost.empty:
+        df_cost["km"] = df_cost["km"].round(2)
+        df_cost["cost_eur"] = df_cost["cost_eur"].round(2)
+        st.dataframe(df_cost.rename(columns={"cost_eur": "cost (€)", "n_pedidos": "n pedidos"}).reset_index(drop=True))
+    else:
+        st.info("No hay camiones con paradas válidas para calcular coste.")
+
+    st.success(f"Km total (todos los camiones, origen→origen): {sum_total_km:.2f} km")
+    st.success(f"Coste total combustible (todos los camiones): {sum_cost:.2f} €")
