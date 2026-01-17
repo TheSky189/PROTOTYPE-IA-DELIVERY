@@ -24,12 +24,6 @@ Sistema de asignación de pedidos a camiones usando Random Forest, heurísticas 
 git clone <TU_REPO_URL>
 cd <TU_REPO_CARPETA>
 
-python -m venv .venv
-# Linux / macOS
-source .venv/bin/activate
-# Windows
-.venv\Scripts\activate
-
 pip install -r requirements.txt
 # Nota: también puedes ejecutar todo en un solo comando (Linux/macOS):
 # python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt

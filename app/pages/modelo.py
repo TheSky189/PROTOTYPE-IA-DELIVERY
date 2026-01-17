@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import folium
@@ -16,30 +15,23 @@ import itertools
 import copy
 from typing import List, Dict
 
-# CONFIG
 st.set_page_config(page_title="Asignación RF - Minimizar km (prioridad por tiempo)", layout="wide")
-st.title("Asignación de Pedidos a Camiones (RF + heurísticas + prioridad por TiempoTotalEstimado)")
+st.title("Asignación de Pedidos a Camiones y Calculo de Rutas(")
 
-# ORS key — sustituye por tu clave si quieres enrutar con ORS
 ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjU1NWQ1MGYzZTMzZjQ4YjJiMmU5MWU0MjczZTc2MWI4IiwiaCI6Im11cm11cjY0In0="
 try:
     client = openrouteservice.Client(key=ORS_API_KEY)
 except Exception:
     client = None
 
-# Requisitos de columnas
 REQUIRED_DESTINOS = {"DestinoID", "coordenadas_gps", "ciudad"}
 REQUIRED_PEDIDOS = {"PedidoID", "DestinoEntregaID"}
 REQUIRED_LINEAS = {"PedidoID", "ProductoID", "Cantidad"}
 REQUIRED_PRODUCTOS = {"ProductoID", "TiempoFabricacionMedia", "Caducidad"}
 
-# Origen (almacén)
-ORIGEN = (41.544608, 2.441753)  # lat, lon
+ORIGEN = (41.544608, 2.441753)
 ORIGEN_LONLAT = [ORIGEN[1], ORIGEN[0]]
 
-# -------------------------
-# UTILIDADES
-# -------------------------
 def cargar_csv(f):
     return pd.read_csv(f) if f is not None else None
 
@@ -60,7 +52,6 @@ def hsv_to_hex(h, s=0.75, v=0.9):
     return '#{:02x}{:02x}{:02x}'.format(int(r*255), int(g*255), int(b*255))
 
 def haversine(lat1, lon1, lat2, lon2):
-    # distancia en km entre dos puntos
     R = 6371.0
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
@@ -69,7 +60,6 @@ def haversine(lat1, lon1, lat2, lon2):
     return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 def nearest_neighbor_order(origen, stops: List[Dict]):
-    # devuelve lista ordenada heurística (NN) a partir de origen
     remaining = stops.copy()
     ordered = []
     current_lat, current_lon = origen
@@ -81,7 +71,6 @@ def nearest_neighbor_order(origen, stops: List[Dict]):
     return ordered
 
 def estimate_marginal_km(last_lat, last_lon, order_lat, order_lon):
-    # defensivo: si alguna coord es None, devolver gran valor penalizador
     if any(pd.isna(x) for x in [last_lat, last_lon, order_lat, order_lon]):
         return 9999.0
     d_last_origin = haversine(last_lat, last_lon, ORIGEN[0], ORIGEN[1])
@@ -91,25 +80,20 @@ def estimate_marginal_km(last_lat, last_lon, order_lat, order_lon):
     return max(marginal, 0.0)
 
 def route_distance_for_stops(stops: List[Dict]):
-    # stops: list of {"lat":..., "lon":...}
     if not stops:
         return 0.0
-    # orden inicial con NN
     ordered = nearest_neighbor_order(ORIGEN, stops)
     total = 0.0
     cur_lat, cur_lon = ORIGEN
     for s in ordered:
         total += haversine(cur_lat, cur_lon, s["lat"], s["lon"])
         cur_lat, cur_lon = s["lat"], s["lon"]
-    # retorno al origen
     total += haversine(cur_lat, cur_lon, ORIGEN[0], ORIGEN[1])
     return total
 
 def two_opt_route_order(origen, stops: List[Dict], max_iter=200):
-    # aplica 2-opt sobre una secuencia de puntos para mejorar ruta (pequeño dataset -> suficiente)
     if not stops:
         return []
-    # start with NN order
     best = nearest_neighbor_order(origen, stops)
     best_distance = route_distance_for_stops(best)
     improved = True
@@ -137,7 +121,6 @@ def safe_to_numeric(s):
     except Exception:
         return 0.0
 
-# UPLOAD CSVs
 st.header("1) Subir datasets (4 CSV obligatorios)")
 
 c1, c2, c3, c4 = st.columns(4)
@@ -169,8 +152,6 @@ validar(productos_df, REQUIRED_PRODUCTOS, "Productos")
 
 st.success("CSV cargados y validados.")
 
-# PARÁMETROS
-# Sidebar: variables del sistema (capacidad, velocidad, consumo, precio)
 st.sidebar.subheader("Configuración de las variables")
 
 capacidad_camion = st.sidebar.number_input("Capacidad del camión (unidades)",min_value=1,max_value=5000,value=500,step=1)
@@ -182,38 +163,46 @@ consumo_l_100km = velocidad_media * FACTOR_CONSUMO
 precio_litro = st.sidebar.number_input("Precio combustible (€/L)",min_value=0.1,max_value=5.0,value=1.65,step=0.01)
 st.sidebar.number_input("Consumo estimado (L / 100 km)",value=round(consumo_l_100km, 2),disabled=True)
 
-# Main: parámetros del cálculo (clusters, RF)
 st.header("2) Parámetros para el cálculo")
-p1, p2 = st.columns(2)
-with p1:
-    n_clusters = st.slider("Número de clusters geográficos (zonas)",min_value=1,max_value=20,value=6,step=1)
-with p2:
-    rf_estimators = st.number_input("RF estimators",min_value=10,max_value=1000,value=200,step=10)
 
-# PREPROCESADO: crear pedidos_final
-# parse coords en destinos
+p1, p2 = st.columns(2)
+
+with p1:
+    n_clusters = 8
+    st.number_input(
+        "Número de clusters geográficos (zonas)",
+        value=n_clusters,
+        disabled=True
+    )
+
+with p2:
+    rf_estimators = 300
+    st.number_input(
+        "Random Forest estimators",
+        value=rf_estimators,
+        disabled=True
+    )
+
 destinos_df[["latitud", "longitud"]] = destinos_df["coordenadas_gps"].str.split(",", expand=True)
 destinos_df["latitud"] = pd.to_numeric(destinos_df["latitud"], errors="coerce")
 destinos_df["longitud"] = pd.to_numeric(destinos_df["longitud"], errors="coerce")
 
-# cantidad total por pedido
 cantidades = lineas_df.groupby("PedidoID")["Cantidad"].sum().reset_index(name="Cantidad_total")
-# tiempo minimo por pedido (estimado)
+
 lineas_productos = lineas_df.merge(productos_df, on="ProductoID", how="left")
 lineas_productos["TiempoProducto"] = lineas_productos["TiempoFabricacionMedia"] + lineas_productos["Caducidad"]
 tiempo_min = lineas_productos.groupby("PedidoID")["TiempoProducto"].min().reset_index(name="TiempoTotalEstimado")
-# unir pedido-destino
+
 pedidos_destino = pedidos_df.merge(destinos_df, left_on="DestinoEntregaID", right_on="DestinoID", how="left")
 pedidos_final = pedidos_destino.merge(cantidades, on="PedidoID", how="left").merge(tiempo_min, on="PedidoID", how="left")
 pedidos_final = pedidos_final.sort_values("PedidoID").reset_index(drop=True)
 
-# Normalizar nombre ciudad si pandas creó ciudad_x/ciudad_y
+
 if "ciudad_y" in pedidos_final.columns:
     pedidos_final.rename(columns={"ciudad_y": "ciudad"}, inplace=True)
 if "ciudad_x" in pedidos_final.columns:
     pedidos_final.drop(columns=["ciudad_x"], inplace=True)
 
-# Eliminar pedidos sin ciudad (opcional, recomendable)
 before_count = len(pedidos_final)
 pedidos_final["ciudad"] = pedidos_final["ciudad"].astype(object)
 pedidos_final["ciudad"] = pedidos_final["ciudad"].apply(lambda x: x.strip() if isinstance(x, str) else x)
@@ -222,12 +211,10 @@ removed = before_count - len(pedidos_final)
 if removed > 0:
     st.warning(f"Se han eliminado {removed} pedidos sin 'ciudad' asociada.")
 
-# coordenadas para clustering
 pedidos_final["latitud"] = pd.to_numeric(pedidos_final.get("latitud"), errors="coerce")
 pedidos_final["longitud"] = pd.to_numeric(pedidos_final.get("longitud"), errors="coerce")
 coords_valid = pedidos_final.dropna(subset=["latitud", "longitud"]).copy()
 
-# CLUSTERING GEO (KMeans)
 st.header("3) Zonificación geográfica (cluster)")
 if coords_valid.empty:
     st.warning("No hay coordenadas válidas; todos los pedidos tendrán ClusterID = -1.")
@@ -252,16 +239,13 @@ st.write("Preview pedidos (con cluster):")
 preview_cols = ["PedidoID", "ciudad", "latitud", "longitud", "Cantidad_total", "TiempoTotalEstimado", "ClusterID", "DistanciaCluster_km"]
 st.dataframe(pedidos_final[[c for c in preview_cols if c in pedidos_final.columns]].head(10))
 
-# ENTRENAR RF Y ASIGNAR (BOTÓN ÚNICO)
 st.markdown("---")
 st.header("4) Entrenar Random Forest y asignar pedidos (prioridad: minimizar km y por tiempo)")
 
 if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + tiempo)"):
     st.info("Construyendo dataset sintético (etiquetas) y entrenando Random Forest...")
 
-    # Preparar prioridad (Priority): menor TiempoTotalEstimado => mayor prioridad
     pf = pedidos_final.copy()
-    # rellenamos tiempos inválidos con (max + 1) para tratarlos como menor prioridad
     if pf["TiempoTotalEstimado"].dropna().empty:
         pf["Tiempo_filled"] = 1.0
     else:
@@ -271,18 +255,13 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
     pf["Priority"] = pf["Tiempo_filled"].apply(lambda t: float(max_time - t) / float(max_time) if max_time > 0 else 0.0)
     pedidos_final = pedidos_final.merge(pf[["PedidoID", "Tiempo_filled", "Priority"]], on="PedidoID", how="left")
 
-    # Construcción dataset sintético con features extra (SameCity, SameTiempo, Priority, Marginal_km)
     samples = []
     labels = []
 
-    # mejor heurística para etiquetado sintético:
-    # ordenamos por Tiempo_filled asc (menor tiempo primero) para favorecer que pedidos más urgentes
-    # se asignen antes; dentro de ese orden por ClusterID y distancia al centro
     orden_sintetico = pedidos_final.copy()
     orden_sintetico["Tiempo_filled"] = orden_sintetico["Tiempo_filled"].fillna(orden_sintetico["Tiempo_filled"].max() if not orden_sintetico["Tiempo_filled"].dropna().empty else 1.0)
     orden_sintetico = orden_sintetico.sort_values(["Tiempo_filled", "ClusterID", "DistanciaCluster_km"]).reset_index(drop=True)
-
-    # Simulación greedy para crear etiquetas: asignamos pedidos enteros a camiones (ilimitados)
+    
     trucks_state = [{"id":1, "cap": capacidad_camion, "orders": [], "clusters": set(), "last_lat": ORIGEN[0], "last_lon": ORIGEN[1], "tiempos": set(), "priorities": []}]
     for _, row in orden_sintetico.iterrows():
         pedido_id = row["PedidoID"]
@@ -294,9 +273,8 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
         dist_origin = 9999.0 if pd.isna(lat) or pd.isna(lon) else haversine(ORIGEN[0], ORIGEN[1], lat, lon)
         priority = float(row.get("Priority", 0.0))
 
-        # heurística de etiquetado:
-        # 1) preferir camiones que ya tengan el mismo tiempo estimado (igual exacto)
-        # 2) preferir camiones que tengan pedidos con prioridad similar (Small delta)
+        # 1) preferir camiones que ya tengan el mismo tiempo estimado
+        # 2) preferir camiones que tengan pedidos con prioridad similar
         # 3) preferir camiones que tengan el mismo cluster
         # 4) luego cualquier camión con capacidad
         assigned_idx = None
@@ -307,7 +285,6 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
         if assigned_idx is None:
             for idx, t in enumerate(trucks_state):
                 if t["cap"] >= qty and t["priorities"]:
-                    # si existe prioridad en camión cercana (diferencia relativa pequeña)
                     if any(abs(p - priority) <= 0.05 for p in t["priorities"]):
                         assigned_idx = idx
                         break
@@ -325,7 +302,6 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
             trucks_state.append({"id": len(trucks_state)+1, "cap": capacidad_camion, "orders": [], "clusters": set(), "last_lat": ORIGEN[0], "last_lon": ORIGEN[1], "tiempos": set(), "priorities": []})
             assigned_idx = len(trucks_state)-1
 
-        # construir features para la muestra positiva
         cap_before = trucks_state[assigned_idx]["cap"]
         last_lat = trucks_state[assigned_idx]["last_lat"]
         last_lon = trucks_state[assigned_idx]["last_lon"]
@@ -348,7 +324,6 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
         })
         labels.append(1)
 
-        # negatives: generar hasta 2 casos negativos prefiriendo camiones que no cumplan SameTiempo o SamePriority o que estén lejos
         other_idxs = [i for i in range(len(trucks_state)) if i != assigned_idx]
         neg_candidates = other_idxs[:2]
         if not neg_candidates:
@@ -367,7 +342,6 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
                 cap_before_neg = trucks_state[oi]["cap"]
                 same_city_neg = int(any(o.get("ciudad","") == city for o in trucks_state[oi]["orders"]))
                 same_tiempo_neg = int(tiempo in trucks_state[oi]["tiempos"])
-                # approximate priority presence
                 priority_neg = 1.0 if any(abs(p - priority) <= 0.05 for p in trucks_state[oi]["priorities"]) else 0.0
 
             marginal_neg = estimate_marginal_km(last_lat_neg, last_lon_neg, lat, lon)
@@ -387,7 +361,6 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
             })
             labels.append(0)
 
-        # actualizar estado del camión asignado (greedy)
         trucks_state[assigned_idx]["cap"] -= qty
         trucks_state[assigned_idx]["orders"].append({"PedidoID": pedido_id, "ciudad": city, "lat": lat, "lon": lon, "TiempoTotalEstimado": tiempo})
         trucks_state[assigned_idx]["clusters"].add(cluster)
@@ -397,7 +370,6 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
             trucks_state[assigned_idx]["last_lat"] = lat
             trucks_state[assigned_idx]["last_lon"] = lon
 
-    # DataFrame y limpieza
     X = pd.DataFrame(samples)
     y = pd.Series(labels)
     X["ClusterID"] = X["ClusterID"].fillna(-1).astype(int)
@@ -407,7 +379,6 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
     X["Marginal_km"] = pd.to_numeric(X["Marginal_km"], errors="coerce").fillna(9999.0)
     X["Priority"] = pd.to_numeric(X["Priority"], errors="coerce").fillna(0.0)
 
-    # Entrenar RF (añadimos Priority como feature)
     feat_cols = ["Cantidad_total", "TiempoTotalEstimado", "Distancia_origen_km",
                  "Capacidad_restante", "Capacidad_ratio",
                  "ClusterID", "DistanciaCluster_km",
@@ -423,11 +394,9 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
     st.session_state["rf_model"] = rf
     st.session_state["rf_features"] = feat_cols
 
-    # Aplicar modelo para asignar pedidos a camiones (usando RF + heurísticas km-aware + prioridad por tiempo)
     st.info("Aplicando modelo (RF + heurísticas km-aware + prioridad por tiempo + mejora local)...")
     model_trucks = [{"id": 1, "cap_remaining": capacidad_camion, "orders": [], "clusters": set(), "last_lat": ORIGEN[0], "last_lon": ORIGEN[1], "tiempos": set(), "priorities": []}]
 
-    # Normalizar marginales para scoring
     all_marginals = []
     for _, row in pedidos_final.iterrows():
         lat = row.get("latitud"); lon = row.get("longitud")
@@ -436,7 +405,6 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
     max_marginal = max(all_marginals) if all_marginals else 1.0
     max_marginal = max(max_marginal, 1.0)
 
-    # ordenar pedidos por prioridad: menor Tiempo_filled (más urgente) primero
     pf2 = pedidos_final.copy()
     pf2["Tiempo_filled"] = pf2["Tiempo_filled"].fillna(pf2["Tiempo_filled"].max() if not pf2["Tiempo_filled"].dropna().empty else 1.0)
     pf2 = pf2.sort_values(["Tiempo_filled", "ClusterID", "DistanciaCluster_km"]).reset_index(drop=True)
@@ -451,11 +419,9 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
         dist_origin = 9999.0 if pd.isna(lat) or pd.isna(lon) else haversine(ORIGEN[0], ORIGEN[1], lat, lon)
         priority = float(row.get("Priority", 0.0))
 
-        # candidatos: camiones existentes + nuevo camión (ilimitado)
         candidates = []
         for t in model_trucks:
             candidates.append({"truck_id": t["id"], "cap_before": t["cap_remaining"], "last_lat": t["last_lat"], "last_lon": t["last_lon"], "orders": t["orders"], "tiempos": t["tiempos"], "priorities": t.get("priorities", [])})
-        # nuevo camión candidato
         candidates.append({"truck_id": len(model_trucks)+1, "cap_before": capacidad_camion, "last_lat": ORIGEN[0], "last_lon": ORIGEN[1], "orders": [], "tiempos": set(), "priorities": []})
 
         feats = []
@@ -481,17 +447,13 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
                 })
                 valid_candidate_indices.append(idx)
         if not feats:
-            # forzar nuevo camión (capacidad asumida suficiente)
             new_id = len(model_trucks) + 1
             model_trucks.append({"id": new_id, "cap_remaining": capacidad_camion - qty, "orders": [{"PedidoID": row["PedidoID"], "ciudad": city, "lat": lat, "lon": lon, "TiempoTotalEstimado": tiempo}], "clusters": {cluster}, "last_lat": lat if pd.notna(lat) else ORIGEN[0], "last_lon": lon if pd.notna(lon) else ORIGEN[1], "tiempos": {tiempo}, "priorities": [priority]})
             continue
 
         Xc = pd.DataFrame(feats)[feat_cols]
-        probs = rf.predict_proba(Xc)[:, 1]  # prob of class 1 (assignment)
+        probs = rf.predict_proba(Xc)[:, 1]
 
-        # scoring combinado: queremos maximizar probabilidad y minimizar marginal_km y preferir SameTiempo y Priority
-        # score = prob - w_marg*(marginal/max_marginal) + w_same * SameTiempo + w_priority * Priority + w_sameprio*SamePriority
-        # pesos ajustables (heurísticos)
         w_marg = 0.25
         w_same = 0.25
         w_priority = 0.30
@@ -507,7 +469,6 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
         chosen = candidates[chosen_global_idx]
         chosen_truck_id = chosen["truck_id"]
 
-        # aplicar asignación (no fraccionamiento)
         if chosen_truck_id == len(model_trucks)+1:
             model_trucks.append({"id": chosen_truck_id, "cap_remaining": capacidad_camion - qty, "orders": [{"PedidoID": row["PedidoID"], "ciudad": city, "lat": lat, "lon": lon, "TiempoTotalEstimado": tiempo}], "clusters": {cluster}, "last_lat": lat if pd.notna(lat) else ORIGEN[0], "last_lon": lon if pd.notna(lon) else ORIGEN[1], "tiempos": {tiempo}, "priorities": [priority]})
         else:
@@ -523,8 +484,6 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
                         t["last_lon"] = lon
                     break
                 
-    # Fase de mejora local: movimientos simples (move single order) y swaps si reducen distancia total
-    # Usamos la distancia aproximada (haversine + 2-opt por camión)
     st.info("Aplicando mejora local (movimientos/swap + 2-opt por ruta) para reducir km totales...")
 
     def compute_total_distance_all(trucks_list):
@@ -534,13 +493,11 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
             total += route_distance_for_stops(stops)
         return total
 
-    # Inicial: aplicar 2-opt en cada camión para mejorar orden y recalcular last_lat/last_lon
     for t in model_trucks:
         if t["orders"]:
             stops = [o for o in t["orders"] if pd.notna(o.get("lat")) and pd.notna(o.get("lon"))]
             if stops:
                 improved_order = two_opt_route_order(ORIGEN, stops, max_iter=100)
-                # reaplicar order to t["orders"]
                 map_by_id = {o["PedidoID"]: o for o in t["orders"]}
                 new_orders = []
                 for s in improved_order:
@@ -563,13 +520,10 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
         improved = False
         base_total = compute_total_distance_all(model_trucks)
 
-        # intentar mover cada pedido a otro camión (incluyendo crear nuevo camión) si reduce distancia total
         for t_idx, t in enumerate(model_trucks):
-            # copiar lista de pedidos para iterar (no modificar mientras iteramos)
             for order in t["orders"][:]:
                 pid = order["PedidoID"]
                 qty = float(order.get("Cantidad_total", 0)) if "Cantidad_total" in order else float(pedidos_final.loc[pedidos_final["PedidoID"]==pid, "Cantidad_total"].iloc[0]) if any(pedidos_final["PedidoID"]==pid) else 0
-                # considerar candidatos (otros camiones + new cam)
                 for target_idx in range(len(model_trucks)+1):
                     if target_idx == t_idx:
                         continue
@@ -593,7 +547,6 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
                         tmp_trucks[target_idx]["cap_remaining"] -= qty
                         tmp_trucks[target_idx].setdefault("tiempos", set()).add(order.get("TiempoTotalEstimado", -1))
                         tmp_trucks[target_idx].setdefault("priorities", []).append(float(pedidos_final.loc[pedidos_final['PedidoID']==pid, 'Priority'].iloc[0]) if any(pedidos_final['PedidoID']==pid) else 0.0)
-                    # aplicar 2-opt en los dos camiones modificados para medir distancia mejor
                     affected_indices = [t_idx]
                     if target_idx < len(model_trucks):
                         affected_indices.append(target_idx)
@@ -629,7 +582,6 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
             if improved:
                 break
 
-        # intentar swaps simples entre camiones: intercambiar un pedido de A con uno de B si mejora y respeta capacidad
         if not improved:
             for (i, j) in itertools.combinations(range(len(model_trucks)), 2):
                 truck_i = model_trucks[i]
@@ -677,7 +629,7 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
                 if improved:
                     break
 
-    # construir lista de camiones (DataFrames) y guardar en session
+    # construir lista de camiones
     model_camiones = []
     for t in model_trucks:
         if t["orders"]:
@@ -708,13 +660,9 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
             model_camiones.append((t["id"], df_full.reset_index(drop=True)))
 
     st.session_state["model_camiones"] = model_camiones
-    st.session_state["model_trucks_raw"] = model_trucks  # guardamos estructura raw por si interesa
+    st.session_state["model_trucks_raw"] = model_trucks
 
-    # Calcular y guardar UNA SOLA VEZ las distancias y costes por camión
-    # usando la misma lógica que el mapa (ORS si disponible, fallback haversine)
-    # y guardarlas dentro de cada entry en model_trucks -> evitar recálculos y garantizar consistencia
     for t in model_trucks:
-        # construir stops para este camión
         stops = []
         for o in t.get("orders", []):
             lat = o.get("lat"); lon = o.get("lon")
@@ -727,7 +675,6 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
             t["n_pedidos"] = 0
             continue
 
-        # ordenar stops (NN + 2-opt) — misma heurística que en el visualizador
         ordered = two_opt_route_order(ORIGEN, stops, max_iter=100)
 
         coords = [ORIGEN_LONLAT]
@@ -750,7 +697,6 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
                 if i != total_legs - 1:
                     km_to_last += leg_km
             except Exception:
-                # fallback: straight line haversine
                 latlon_a = [a[1], a[0]]
                 latlon_b = [b[1], b[0]]
                 leg_km = haversine(latlon_a[0], latlon_a[1], latlon_b[0], latlon_b[1])
@@ -764,10 +710,8 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
         t["cost_eur"] = cost_eur
         t["n_pedidos"] = len(stops)
 
-    # guardar de nuevo en session_state
     st.session_state["model_trucks_raw"] = model_trucks
 
-    # calcular resumen global (usar los valores guardados, no recalcular)
     sum_total_km = sum(t.get("total_km", 0.0) for t in model_trucks)
     total_cost_all = sum(t.get("cost_eur", 0.0) for t in model_trucks)
 
@@ -775,7 +719,6 @@ if st.button("Entrenar y asignar con Random Forest (prioridad: minimizar km + ti
     st.success(f"Km total (todos los camiones, origen→origen) [suma de rutas por camión]: {sum_total_km:.2f} km")
     st.success(f"Coste total combustible (todos los camiones): {total_cost_all:.2f} €")
 
-# VISUALIZACIÓN: resultados (expanders)
 st.markdown("---")
 st.header("5) Resultado de asignación (RF)")
 
@@ -791,7 +734,6 @@ else:
             else:
                 st.dataframe(df_tr[cols_show].reset_index(drop=True))
 
-# MAPA: Mostrar ruta por camión (botón individual)
 st.markdown("---")
 st.header("6) Mostrar ruta por camión (visualización)")
 
@@ -823,7 +765,6 @@ def mostrar_mapa_camion_from_df(df_camion, camion_id):
         st.error("No hay paradas válidas para este camión.")
         return
 
-    # Ordenar paradas con NN y luego 2-opt para visualización
     ordered_stops = two_opt_route_order(ORIGEN, stops, max_iter=200)
 
     coords = [ORIGEN_LONLAT]
@@ -840,7 +781,6 @@ def mostrar_mapa_camion_from_df(df_camion, camion_id):
     for i, s in enumerate(final_stops[1:-1], start=1):
         folium.Marker([s["lat"], s["lon"]], popup=f"Pedido {s['PedidoID']} - {s['city']}", tooltip=s['city']).add_to(cluster)
 
-    # Dibujar trazado (usamos ORS si está disponible, igual que antes)
     total_km_local = 0.0
     km_to_last_local = 0.0
     total_legs = len(coords) - 1
@@ -884,7 +824,6 @@ def mostrar_mapa_camion_from_df(df_camion, camion_id):
     m.get_root().html.add_child(folium.Element(legend_html))
     st.components.v1.html(m._repr_html_(), height=700)
 
-    # Mostrar métricas: usamos los valores guardados en model_trucks_raw (si existen) para garantizar consistencia con el resumen
     stored = None
     if "model_trucks_raw" in st.session_state:
         stored = next((x for x in st.session_state["model_trucks_raw"] if x.get("id") == camion_id), None)
@@ -893,27 +832,23 @@ def mostrar_mapa_camion_from_df(df_camion, camion_id):
         total_km_show = stored["total_km"]
         km_to_last_show = stored.get("km_to_last", km_to_last_local)
     else:
-        # fallback: usar valores locales calculados en la función
         total_km_show = total_km_local
         km_to_last_show = km_to_last_local
 
     coste_combustible_total = (total_km_show / 100.0) * consumo_l_100km * precio_litro
 
-    # mostrar ambas métricas: total (incluye retorno) y distancia hasta último pedido (sin retorno)
     st.success(f"Distancia total aproximada (euclídea): {total_km_show:.2f} km")
     st.success(f"Coste total de combustible del trayecto completo (incluye retorno al origen): {coste_combustible_total:.2f} €")
     st.info(f"Distancia hasta el último pedido (sin retorno al origen): {km_to_last_show:.2f} km")
 
-    # Estimación de días hasta la última entrega basada en velocidad_media y 9h/día
     try:
         vm = float(velocidad_media)
         if vm <= 0:
             st.warning("Velocidad media debe ser mayor que 0 para calcular tiempos.")
         else:
-            hours_to_last = km_to_last_show / vm  # horas de conducción total hasta último pedido
+            hours_to_last = km_to_last_show / vm
             driving_hours_per_day = 9.0
             days_to_last = hours_to_last / driving_hours_per_day
-            # mostrar detalles: horas y días (con 2 decimales)
             st.info(f"Tiempo de conducción estimado hasta el último pedido: {hours_to_last:.2f} h")
             st.info(f"Días de conducción estimados hasta el último pedido (conductor: {driving_hours_per_day:.0f} h/día): {days_to_last:.2f} días")
 
@@ -936,8 +871,6 @@ if "model_camiones" in st.session_state:
 else:
     st.info("No hay camiones asignados para visualizar. Ejecuta la asignación primero.")
 
-# Resumen global persistente (si existe asignación)
-# Ahora mostramos las distancias ya calculadas y guardadas en model_trucks_raw
 if "model_trucks_raw" in st.session_state:
     trucks_all = st.session_state["model_trucks_raw"]
 
