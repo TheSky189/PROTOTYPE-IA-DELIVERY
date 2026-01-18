@@ -22,7 +22,7 @@ Sistema de asignación de pedidos a camiones usando Random Forest, heurísticas 
 1. **Clonar el repositorio**
 
 ```bash
-git clone <TU_REPO_URL>
+git clone https://github.com/TheSky189/PROTOTYPE-IA-DELIVERY
 cd <TU_REPO_CARPETA>
 
 pip install -r requirements.txt
