@@ -16,7 +16,7 @@ import copy
 from typing import List, Dict
 
 st.set_page_config(page_title="Asignación RF - Minimizar km (prioridad por tiempo)", layout="wide")
-st.title("Asignación de Pedidos a Camiones y Calculo de Rutas(")
+st.title("Asignación de Pedidos a Camiones y Calculo de Rutas")
 
 ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjU1NWQ1MGYzZTMzZjQ4YjJiMmU5MWU0MjczZTc2MWI4IiwiaCI6Im11cm11cjY0In0="
 try:

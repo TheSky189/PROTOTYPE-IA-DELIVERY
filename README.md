@@ -7,6 +7,7 @@ Sistema de asignación de pedidos a camiones usando Random Forest, heurísticas 
 ## Requisitos
 
 - Python 3.10+
+- Git
 - Conexión a Internet (para ORS y descargas de librerías)
 - CSVs de datos de ejemplo:
   - `destinos_geocodificados.csv`
@@ -25,8 +26,6 @@ git clone <TU_REPO_URL>
 cd <TU_REPO_CARPETA>
 
 pip install -r requirements.txt
-# Nota: también puedes ejecutar todo en un solo comando (Linux/macOS):
-# python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
 
 # Ejecutar aplicación
 streamlit run app/main_streamlit.py
